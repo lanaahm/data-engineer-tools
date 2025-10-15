@@ -1,0 +1,113 @@
+# ================================ AIRFLOW ================================
+x-airflow-common:
+  &airflow-common
+  build: ./airflow/.
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/data:/opt/airflow/data
+    - ./airflow/plugins:/opt/airflow/plugins
+  user: "${AIRFLOW_UID:-50000}:0"
+  env_file:
+    - ./airflow/.env
+  depends_on:
+    &airflow-common-depends-on
+    airflow-postgres:
+      condition: service_healthy
+
+services:
+  airflow-postgres:
+    image: quay.io/debezium/example-postgres:2.6
+    container_name: airflow-postgres
+    env_file:
+      - ./airflow/.env
+    ports:
+      - 5432:5432
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    profiles:
+      - airflow
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    command: webserver
+    ports:
+      - 8080:8080
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      <<: *airflow-common-depends-on
+    profiles:
+      - airflow
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: scheduler
+    depends_on:
+      <<: *airflow-common-depends-on
+    profiles:
+      - airflow
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    entrypoint: /bin/bash
+    command: version
+    profiles:
+      - airflow
+
+# ================================ DATABASES ================================
+
+  # PostgreSQL Source Database
+  postgres-source:
+    image: postgres:13
+    container_name: postgres-source
+    env_file:
+      - ./db/.env
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-source-volume:/var/lib/postgresql/data
+      - ./db/postgresql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "sourceuser", "-d", "sourcedb"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+    profiles:
+      - postgres
+      - db
+
+  # MySQL Target Database
+  mysql-target:
+    image: mysql:8.0
+    container_name: mysql-target
+    env_file:
+      - ./db/.env
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-target-volume:/var/lib/mysql
+      - ./db/mysql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    profiles:
+      - mysql
+      - db
+
+volumes:
+  airflow-postgres-db-volume:
+  postgres-source-volume:
+  mysql-target-volume:
